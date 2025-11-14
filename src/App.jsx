@@ -8,6 +8,8 @@ function App() {
   const [query, setQuery] = useState('')
   const [activeTag, setActiveTag] = useState('')
   const [cartOpen, setCartOpen] = useState(false)
+  const [checkingOut, setCheckingOut] = useState(false)
+  const [checkoutResult, setCheckoutResult] = useState(null)
   const [cart, setCart] = useState(() => {
     try {
       const raw = localStorage.getItem('cart')
@@ -65,11 +67,31 @@ function App() {
 
   const subtotal = useMemo(() => cart.reduce((sum, it) => sum + (it.price || 0) * (it.qty || 1), 0), [cart])
 
-  const handleCheckout = () => {
-    // Simple demo checkout: show message and clear cart
-    alert('Thanks! Your order was placed. You will receive download links shortly.')
-    clearCart()
-    setCartOpen(false)
+  const handleCheckout = async () => {
+    if (!BACKEND_URL) {
+      alert('Backend not configured')
+      return
+    }
+    if (cart.length === 0) return
+    setCheckingOut(true)
+    try {
+      const items = cart.map((it) => ({ id: (it.id || it._id || it.name), qty: it.qty || 1 }))
+      const res = await fetch(`${BACKEND_URL}/checkout`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items })
+      })
+      if (!res.ok) throw new Error(`Checkout failed: ${res.status}`)
+      const data = await res.json()
+      setCheckoutResult(data)
+      clearCart()
+      setCartOpen(false)
+    } catch (e) {
+      console.error(e)
+      alert('Checkout failed. Please try again.')
+    } finally {
+      setCheckingOut(false)
+    }
   }
 
   const cartCount = cart.reduce((n, it) => n + (it.qty || 1), 0)
@@ -205,11 +227,48 @@ function App() {
               <span>Subtotal</span>
               <span className="font-semibold">${subtotal.toFixed(2)}</span>
             </div>
-            <button onClick={handleCheckout} disabled={cart.length === 0} className="mt-4 w-full px-4 py-3 rounded-xl bg-fuchsia-600 hover:bg-fuchsia-700 disabled:opacity-50 disabled:cursor-not-allowed">Checkout</button>
-            <button onClick={clearCart} disabled={cart.length === 0} className="mt-2 w-full px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 disabled:opacity-50">Clear cart</button>
+            <button onClick={handleCheckout} disabled={cart.length === 0 || checkingOut} className="mt-4 w-full px-4 py-3 rounded-xl bg-fuchsia-600 hover:bg-fuchsia-700 disabled:opacity-50 disabled:cursor-not-allowed">
+              {checkingOut ? 'Processing...' : 'Checkout'}
+            </button>
+            <button onClick={clearCart} disabled={cart.length === 0 || checkingOut} className="mt-2 w-full px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 disabled:opacity-50">Clear cart</button>
           </div>
         </aside>
       </div>
+
+      {/* Checkout confirmation modal */}
+      {checkoutResult && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/70" onClick={() => setCheckoutResult(null)} />
+          <div className="relative z-10 w-[95%] sm:w-[560px] max-h-[80vh] overflow-auto bg-slate-900 border border-white/10 rounded-2xl p-6 shadow-2xl">
+            <h3 className="text-xl font-semibold">Order Confirmed</h3>
+            <p className="mt-1 text-slate-300">{checkoutResult.message}</p>
+            <p className="mt-1 text-xs text-slate-400">Order ID: {checkoutResult.order_id}</p>
+            <div className="mt-4 space-y-3">
+              {(checkoutResult.items || []).map((li) => (
+                <div key={li.id} className="flex items-start justify-between gap-4 p-3 rounded-xl bg-white/5 border border-white/10">
+                  <div>
+                    <p className="font-medium">{li.name}</p>
+                    <p className="text-xs text-slate-400">Qty {li.qty} • ${Number(li.price).toFixed(2)} each</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-semibold">${Number(li.line_total).toFixed(2)}</p>
+                    {(li.download_links || []).map((link, idx) => link ? (
+                      <a key={idx} href={link} target="_blank" className="block text-xs text-fuchsia-300 hover:text-fuchsia-200 underline mt-1">Download {idx + 1}</a>
+                    ) : null)}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="mt-4 flex items-center justify-between">
+              <span className="text-slate-300">Subtotal</span>
+              <span className="font-semibold">${Number(checkoutResult.subtotal || 0).toFixed(2)}</span>
+            </div>
+            <div className="mt-6 flex justify-end">
+              <button onClick={() => setCheckoutResult(null)} className="px-4 py-2 rounded-lg bg-fuchsia-600 hover:bg-fuchsia-700">Close</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Footer */}
       <footer className="border-t border-white/10 py-8 text-center text-slate-400">
